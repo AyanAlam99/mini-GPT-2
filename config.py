@@ -13,7 +13,7 @@ learning_rate = 3e-4
 
 max_epochs = 10
 n_embd = 128
-n_head = 6
+n_head = 8
 n_layer = 8
 dropout = 0.2
 vocab_size = 100256 
