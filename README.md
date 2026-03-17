@@ -97,7 +97,7 @@ CONFIG = {
     "vocab_size":    100_256,   # tiktoken cl100k_base
     "n_embd":        128,       # embedding dimension
     "context_win":   256,       # tokens per training context
-    "n_head":        6,         # attention heads
+    "n_head":        8,         # attention heads
     "n_layer":       8,         # transformer blocks
     "dropout":       0.2,
     "learning_rate": 3e-4,      # AdamW
