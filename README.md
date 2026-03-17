@@ -1,83 +1,251 @@
-# mini-GPT2
+<div align="center">
 
-> An autoregressive, decoder-only Transformer language model built entirely from scratch in PyTorch.
+# ⚡ mini-GPT2
+### A Decoder-Only Transformer Language Model — Built From Scratch in PyTorch
 
-This project implements the core mathematics of self-attention and next-token prediction, heavily inspired by standard generative pre-trained transformer architectures. It features a custom training loop, out-of-core memory-mapped data loading for efficient streaming of large text corpora, and utilizes OpenAI's `tiktoken` for robust sub-word tokenization.
+[![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Tokenizer](https://img.shields.io/badge/Tokenizer-tiktoken_cl100k-412991?style=for-the-badge&logo=openai&logoColor=white)](https://github.com/openai/tiktoken)
+[![Vocab](https://img.shields.io/badge/Vocab_Size-100%2C256-orange?style=for-the-badge)](#️-model-hyperparameters)
+[![Architecture](https://img.shields.io/badge/Architecture-Decoder--Only_Transformer-blue?style=for-the-badge)](#-model-architecture)
+
+<br/>
+
+> *Every matrix multiply, every attention head, every residual connection — implemented from first principles. No HuggingFace. No shortcuts.*
+
+<br/>
 
 ---
 
-## Key Features
+</div>
 
-- **Custom Transformer Architecture** — Implementation of multi-head causal self-attention, pre-LayerNorm residual blocks, and feed-forward networks.
-- **Efficient Data Pipeline** — Uses Python's `mmap` module for out-of-core data loading, allowing the model to train on datasets larger than available RAM by streaming data directly from disk.
-- **Modern Tokenization** — Integrated with OpenAI's `tiktoken` (`cl100k_base` encoding) to handle a vocabulary size of 100,256.
-- **Modular Codebase** — Clean separation of concerns with dedicated modules for data loading, model architecture, loss estimation, and configuration.
-- **Checkpointing & Metrics** — Includes automated model checkpoint saving/loading and custom perplexity calculations to monitor model convergence.
+## 🧠 What This Is
+
+`mini-GPT2` is a ground-up PyTorch implementation of an **autoregressive, decoder-only Transformer** — the same fundamental architecture behind GPT-2, GPT-3, and the modern LLM family.
+
+The goal isn't to compete with production models on scale. It's to demonstrate **complete, working mastery** of the core mathematics:
+
+- **Causal self-attention** — how tokens attend to their past but not their future
+- **Autoregressive next-token prediction** — how language models generate text
+- **Pre-LayerNorm residual blocks** — the stability trick modern LLMs all use
+- **Out-of-core data streaming** — how to train on datasets larger than RAM
 
 ---
 
-## 📂 Project Structure
+## 🏗️ Model Architecture
 
 ```
-miniGpt/
-├── data/
-│   └── dataloader.py       # Memory-mapped dataset streaming
-├── utlis/
-│   ├── loss.py             # Cross-entropy loss estimation
-│   ├── metrics.py          # Perplexity calculation
-│   └── save_load.py        # Checkpoint management
-├── config.py               # Hyperparameters and environment paths
-├── core.py                 # Shared core library imports
-├── model.py                # GPT model architecture (Attention, Blocks, Heads)
-├── train.py                # Main training loop and optimizer setup
-└── requirements.txt        # Project dependencies
+Input Token IDs  [t₁, t₂, ..., tₙ]
+        │
+        ▼
+┌───────────────────────────────────────┐
+│         Token Embedding Table         │
+│         vocab_size → n_embd (128)     │
+└───────────────┬───────────────────────┘
+                │
+        + Positional Embeddings
+          (learned, absolute)
+                │
+                ▼
+┌───────────────────────────────────────┐   ×8
+│        Transformer Block              │◄──────
+│                                       │
+│  ┌─────────────────────────────────┐  │
+│  │  Pre-LayerNorm                  │  │
+│  │  Multi-Head Causal Self-Attn    │  │  6 heads
+│  │  (causal mask — no future leak) │  │
+│  │  + Dropout (0.2)                │  │
+│  └──────────────┬──────────────────┘  │
+│      Residual   │   Connection        │
+│  ┌──────────────▼──────────────────┐  │
+│  │  Pre-LayerNorm                  │  │
+│  │  Feed-Forward Network           │  │
+│  │  (n_embd → 4×n_embd → n_embd)  │  │
+│  │  + Dropout (0.2)                │  │
+│  └─────────────────────────────────┘  │
+└───────────────────────────────────────┘
+                │
+        Final LayerNorm
+                │
+                ▼
+┌───────────────────────────────────────┐
+│     Language Model Head (Linear)      │
+│     n_embd (128) → vocab (100,256)    │
+└───────────────────────────────────────┘
+                │
+                ▼
+        Next-Token Logits
 ```
+
+### Design Choices — and Why They Matter
+
+| Choice | Alternative | Why This Is Better |
+|--------|-------------|-------------------|
+| **Pre-LayerNorm** | Post-LayerNorm (original Transformer) | Stabilises training gradient flow; used in GPT-2+ |
+| **Causal Attention Mask** | Bidirectional attention | Required for autoregressive generation — no future token leakage |
+| **AdamW Optimizer** | Adam | Decoupled weight decay prevents adaptive gradient scaling from undermining regularisation |
+| **`tiktoken` cl100k_base** | char-level / word-level | Subword BPE handles rare words, multilingual text, and code efficiently |
+| **`mmap` Data Loading** | Loading full dataset into RAM | Streams data directly from disk — training scales beyond available RAM |
 
 ---
 
 ## ⚙️ Model Hyperparameters
 
-The current configuration (`config.py`) is set up for a lightweight, fast-training environment:
+```python
+# config.py
+CONFIG = {
+    "vocab_size":    100_256,   # tiktoken cl100k_base
+    "n_embd":        128,       # embedding dimension
+    "context_win":   256,       # tokens per training context
+    "n_head":        6,         # attention heads
+    "n_layer":       8,         # transformer blocks
+    "dropout":       0.2,
+    "learning_rate": 3e-4,      # AdamW
+}
+```
 
-| Parameter | Value |
-|---|---|
-| Vocab Size | 100,256 (`cl100k_base`) |
-| Embedding Dimension (`n_embd`) | 128 |
-| Context Window (`context_win`) | 256 tokens |
-| Attention Heads (`n_head`) | 6 |
-| Transformer Layers (`n_layer`) | 8 |
-| Dropout | 0.2 |
-| Learning Rate | 3e-4 (AdamW) |
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Vocab Size | 100,256 | `cl100k_base` — same tokenizer as GPT-4 |
+| Embedding Dim | 128 | Lightweight for fast iteration |
+| Context Window | 256 tokens | Expandable — see Roadmap |
+| Attention Heads | 6 | Head dim = 128/6 ≈ 21 |
+| Transformer Layers | 8 | Depth over width |
+| Dropout | 0.2 | Applied post-attention and post-FFN |
+| Learning Rate | 3e-4 | AdamW with decoupled weight decay |
 
 ---
 
-## Usage
+## ⚡ Efficient Data Pipeline
 
-### 1. Setup
+Training large language models is bottlenecked as much by **data throughput** as by compute. This project addresses that with memory-mapped file I/O:
 
-Install the required dependencies:
+```python
+# dataloader.py — simplified illustration
+import mmap
+
+class MemoryMappedDataset:
+    def __init__(self, filepath):
+        self.file = open(filepath, 'rb')
+        self.mm = mmap.mmap(self.file.fileno(), 0, access=mmap.ACCESS_READ)
+
+    def get_batch(self, idx, context_win):
+        # Reads directly from disk — no RAM copy
+        raw = self.mm[idx : idx + context_win + 1]
+        ...
+```
+
+**Why this matters:** Standard `torch.utils.data.Dataset` loads the full corpus into memory at init. With `mmap`, the OS kernel handles paging — the dataset lives on disk and only the requested bytes are loaded per batch. **Training on corpora larger than your GPU's RAM becomes trivial.**
+
+---
+
+## 📁 Project Structure
+
+```
+miniGpt/
+├── data/
+│   └── dataloader.py       # mmap-based out-of-core dataset streaming
+│
+├── utils/
+│   ├── loss.py             # Cross-entropy loss estimation
+│   ├── metrics.py          # Perplexity calculation & convergence monitoring
+│   └── save_load.py        # Checkpoint save / resume logic
+│
+├── config.py               # All hyperparameters & environment paths
+├── core.py                 # Shared imports across modules
+├── model.py                # Full GPT architecture (Attention → Blocks → Head)
+├── train.py                # Training loop, optimizer, LR scheduling
+└── requirements.txt
+```
+
+---
+
+## 🚀 Usage
+
+### 1. Install Dependencies
 
 ```bash
 pip install torch tiktoken matplotlib pandas
 ```
 
-Update the `train_file`, `val_file`, and `save_dir` paths in `config.py` to point to your local dataset and desired checkpoint directory.
+### 2. Configure Paths
 
-### 2. Training
+Edit `config.py` to point to your dataset and checkpoint directory:
 
-Run the main training script. The script will automatically load the latest checkpoint if one exists in `save_dir`.
+```python
+CONFIG = {
+    "train_file": "/path/to/train.bin",   # pre-tokenized binary file
+    "val_file":   "/path/to/val.bin",
+    "save_dir":   "./checkpoints/",
+    ...
+}
+```
+
+### 3. Prepare Your Data
+
+Tokenize your raw text corpus using `tiktoken` and save as a flat binary file of token IDs:
+
+```python
+import tiktoken, numpy as np
+
+enc = tiktoken.get_encoding("cl100k_base")
+tokens = enc.encode(open("corpus.txt").read())
+np.array(tokens, dtype=np.uint32).tofile("train.bin")
+```
+
+### 4. Train
 
 ```bash
 python train.py
 ```
 
+The script **automatically resumes** from the latest checkpoint in `save_dir` if one exists. Training metrics (loss, perplexity) are logged per interval and plots are saved automatically.
+
 ---
 
-## Roadmap & Future Optimizations
+## 🗺️ Roadmap — Closing the Gap to Modern LLMs
 
-To evolve this architecture closer to modern production-grade LLMs, the following improvements are planned:
+This implementation is production-honest about what it doesn't yet have. Each item below is a concrete, well-scoped engineering improvement:
 
-- **KV Caching** — Implement Key-Value (KV) caching in the `generate` function to reduce time complexity during autoregressive decoding from $O(N^3)$ to $O(N^2)$.
-- **FlashAttention** — Integrate `torch.nn.functional.scaled_dot_product_attention` to reduce VRAM bottlenecking during forward/backward passes.
-- **Rotary Position Embeddings (RoPE)** — Replace standard absolute positional embeddings for better sequence length generalization.
-- **SwiGLU Activations** — Swap standard ReLU in the feed-forward network for SwiGLU, as used in modern LLM architectures.
+### ⚡ KV Caching
+**Problem:** During autoregressive generation, the Key and Value matrices for all past tokens are recomputed at every new step — `O(N²)` redundant work per token.
+
+**Fix:** Cache K and V tensors for all previous positions. Each new token only computes K/V for itself, then appends to the cache. Reduces decoding complexity from `O(N³)` → `O(N²)`.
+
+### 🔦 FlashAttention
+**Problem:** Standard attention materialises the full `N×N` attention score matrix in VRAM — a memory bottleneck that limits context window scaling.
+
+**Fix:** Replace with `torch.nn.functional.scaled_dot_product_attention` (PyTorch 2.0+). FlashAttention uses tiled, fused CUDA kernels that never materialise the full matrix, cutting VRAM usage and improving throughput.
+
+```python
+# One-line drop-in replacement
+out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+```
+
+### 🔄 Rotary Position Embeddings (RoPE)
+**Problem:** Absolute positional embeddings don't generalise to sequence lengths longer than those seen during training.
+
+**Fix:** Encode position as a rotation applied directly to the query/key vectors. RoPE is relative by construction — the model learns position-invariant attention patterns that transfer to longer contexts at inference time. Used in LLaMA, Mistral, and GPT-NeoX.
+
+### 🔀 SwiGLU Activations
+**Problem:** Standard ReLU in the feed-forward block creates dead neurons (zero gradient for negative inputs) and is outperformed by gated variants.
+
+**Fix:** Replace FFN activation with SwiGLU — `SwiGLU(x) = (xW₁) ⊙ σ(xW₂)`. The gating mechanism selectively activates dimensions based on input content. Used in PaLM, LLaMA 2, and Mistral.
+
+---
+
+## 📚 References
+
+- [**Attention Is All You Need**](https://arxiv.org/abs/1706.03762) — Vaswani et al., 2017 (Original Transformer)
+- [**Language Models are Unsupervised Multitask Learners**](https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf) — Radford et al., 2019 (GPT-2)
+- [**FlashAttention**](https://arxiv.org/abs/2205.14135) — Dao et al., 2022
+- [**RoFormer: Enhanced Transformer with Rotary Position Embedding**](https://arxiv.org/abs/2104.09864) — Su et al., 2021
+- [**GLU Variants Improve Transformer**](https://arxiv.org/abs/2002.05202) — Noam Shazeer, 2020 (SwiGLU)
+
+---
+
+<div align="center">
+
+*Understanding transformers from the inside out — one matrix multiply at a time.*
+
+</div>
