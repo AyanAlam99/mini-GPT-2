@@ -97,7 +97,7 @@ CONFIG = {
     "vocab_size":    100_256,   # tiktoken cl100k_base
     "n_embd":        128,       # embedding dimension
     "context_win":   256,       # tokens per training context
-    "n_head":        8,         # attention heads
+    "n_head":        6,         # attention heads
     "n_layer":       8,         # transformer blocks
     "dropout":       0.2,
     "learning_rate": 3e-4,      # AdamW
@@ -118,7 +118,7 @@ CONFIG = {
 
 ## ⚡ Efficient Data Pipeline
 
-Training large language models is bottlenecked as much by **data throughput** as by compute. This project addresses that with memory-mapped file I/O:
+Training large language models is bottlenecked as much by **data throughput** as by compute. This project addresses that with memory-mapped file I/O over raw text corpora:
 
 ```python
 # dataloader.py — simplified illustration
@@ -126,16 +126,21 @@ import mmap
 
 class MemoryMappedDataset:
     def __init__(self, filepath):
-        self.file = open(filepath, 'rb')
+        self.file = open(filepath, 'r', encoding='utf-8')
         self.mm = mmap.mmap(self.file.fileno(), 0, access=mmap.ACCESS_READ)
 
-    def get_batch(self, idx, context_win):
-        # Reads directly from disk — no RAM copy
-        raw = self.mm[idx : idx + context_win + 1]
+    def get_batch(self, context_win, batch_size):
+        # Read a text chunk directly from disk — no full-file RAM load
+        data_chunk = self.mm.read(context_win * batch_size).decode('utf-8')
+        # Tokenize on-the-fly
+        tokens = enc.encode(data_chunk)
+        data = torch.tensor(tokens)
         ...
 ```
 
-**Why this matters:** Standard `torch.utils.data.Dataset` loads the full corpus into memory at init. With `mmap`, the OS kernel handles paging — the dataset lives on disk and only the requested bytes are loaded per batch. **Training on corpora larger than your GPU's RAM becomes trivial.**
+**How it works:** Rather than loading the entire corpus into memory at startup, `mmap` lets the OS kernel page in only the bytes needed per batch. Each iteration reads a raw text chunk, decodes it, tokenizes it with `tiktoken`, and converts to a tensor — keeping the full dataset on disk throughout training. **This allows training on text corpora larger than available RAM.**
+
+> **Note:** This pipeline operates on raw text files (`webcrawled_train.txt` / `webcrawled_val.txt`) and tokenizes dynamically at batch time. A future optimisation is to pre-tokenize to `.bin` (uint32 token IDs) to eliminate the per-batch `tiktoken` overhead and further speed up training.
 
 ---
 
@@ -174,26 +179,14 @@ Edit `config.py` to point to your dataset and checkpoint directory:
 
 ```python
 CONFIG = {
-    "train_file": "/path/to/train.bin",   # pre-tokenized binary file
-    "val_file":   "/path/to/val.bin",
+    "train_file": "/path/to/webcrawled_train.txt",
+    "val_file":   "/path/to/webcrawled_val.txt",
     "save_dir":   "./checkpoints/",
     ...
 }
 ```
 
-### 3. Prepare Your Data
-
-Tokenize your raw text corpus using `tiktoken` and save as a flat binary file of token IDs:
-
-```python
-import tiktoken, numpy as np
-
-enc = tiktoken.get_encoding("cl100k_base")
-tokens = enc.encode(open("corpus.txt").read())
-np.array(tokens, dtype=np.uint32).tofile("train.bin")
-```
-
-### 4. Train
+### 3. Train
 
 ```bash
 python train.py
